@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Loader2, Package, Search, Github, Linkedin, Mail, Code2, Heart } from 'lucide-react'
+import { Loader2, Package, Search, Github, Linkedin, Mail, Code2, Heart, AlertCircle, RefreshCcw } from 'lucide-react'
 
 // Types for our API Response
 interface Product {
@@ -22,6 +22,7 @@ export default function App() {
   const [products, setProducts] = useState<Product[]>([])
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [category, setCategory] = useState<string>('All')
   
   const observer = useRef<IntersectionObserver | null>(null)
@@ -29,6 +30,7 @@ export default function App() {
   const fetchProducts = async (reset = false) => {
     try {
       setLoading(true)
+      setError(null)
       
       const params = new URLSearchParams()
       if (category !== 'All') {
@@ -40,18 +42,26 @@ export default function App() {
         params.append('cursor', currentCursorToFetch)
       }
 
-      const res = await fetch(`http://localhost:8000/api/products?${params.toString()}`)
+      const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+      const res = await fetch(`${API_BASE}/api/products?${params.toString()}`)
+      
+      if (!res.ok) {
+        throw new Error(`Server responded with status: ${res.status}`)
+      }
+
       const data: ApiResponse = await res.json()
+      const newItems = data.items || []
       
       if (reset) {
-        setProducts(data.items)
+        setProducts(newItems)
       } else {
-        setProducts(prev => [...prev, ...data.items])
+        setProducts(prev => [...prev, ...newItems])
       }
       
-      setNextCursor(data.next_cursor)
-    } catch (err) {
-      console.error(err)
+      setNextCursor(data.next_cursor || null)
+    } catch (err: any) {
+      console.error("Fetch Error:", err)
+      setError(err.message || "Failed to load products. Please check your connection.")
     } finally {
       setLoading(false)
     }
@@ -133,7 +143,30 @@ export default function App() {
       {/* Main Grid Content */}
       <main className="flex-1 max-w-6xl mx-auto px-4 pt-32 pb-20 w-full">
         
-        {products.length === 0 && !loading && (
+        {/* Error State UI */}
+        {error && (
+          <motion.div 
+            initial={{ opacity: 0, y: -20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            className="mb-8 p-6 bg-red-50 border border-red-200 rounded-2xl flex flex-col items-center text-center shadow-lg shadow-red-500/10"
+          >
+            <div className="bg-red-100 p-3 rounded-full mb-3 text-red-600">
+              <AlertCircle className="w-8 h-8" />
+            </div>
+            <h2 className="text-xl font-bold text-red-900 mb-2">Oops! Something went wrong.</h2>
+            <p className="text-red-700 font-medium mb-5 max-w-md">
+              {error}
+            </p>
+            <button 
+              onClick={() => fetchProducts(true)}
+              className="flex items-center gap-2 px-6 py-2.5 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-xl transition-all hover:shadow-md hover:-translate-y-0.5 active:translate-y-0"
+            >
+              <RefreshCcw className="w-4 h-4" /> Try Again
+            </button>
+          </motion.div>
+        )}
+
+        {products.length === 0 && !loading && !error && (
           <motion.div 
             initial={{ opacity: 0 }} animate={{ opacity: 1 }}
             className="text-center py-32 text-slate-500 flex flex-col items-center gap-4"

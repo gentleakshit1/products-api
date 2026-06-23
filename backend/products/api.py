@@ -1,9 +1,14 @@
 import base64
 import json
 import uuid
+import logging
 from datetime import datetime
 from typing import List, Optional
 from ninja import NinjaAPI, Schema
+from ninja.errors import HttpError
+from django.db.models import Q
+
+logger = logging.getLogger(__name__)
 from django.db.models import Q
 from .models import Product
 
@@ -49,41 +54,38 @@ def decode_cursor(cursor: str) -> Optional[dict]:
 
 @api.get("/products", response=PaginatedProductSchema)
 def list_products(request, category: Optional[str] = None, cursor: Optional[str] = None, limit: int = 50):
-    queryset = Product.objects.all()
-    
-    # Apply category filter
-    if category:
-        queryset = queryset.filter(category__iexact=category)
+    try:
+        queryset = Product.objects.all()
         
-    # The heart of the task: applying the cursor
-    if cursor:
-        cursor_data = decode_cursor(cursor)
-        if cursor_data:
-            # We fetch products created BEFORE our cursor's timestamp.
-            # If two products share the exact same timestamp, we use the ID as a tie-breaker.
-            queryset = queryset.filter(
-                Q(created_at__lt=cursor_data['ts']) | 
-                (Q(created_at=cursor_data['ts']) & Q(id__lt=cursor_data['id']))
-            )
+        # Apply category filter
+        if category:
+            queryset = queryset.filter(category__iexact=category)
             
-    # Always sort newest first, matching the database index we built in models.py.
-    # Without this exact sorting order, the index wouldn't be used and it would be slow!
-    queryset = queryset.order_by('-created_at', '-id')
-    
-    # We fetch `limit + 1` items. 
-    # If we want 50 items, we ask the database for 51.
-    # If we get 51 back, we know there is another page!
-    items = list(queryset[:limit + 1])
-    
-    next_cursor = None
-    if len(items) > limit:
-        # We have a next page.
-        last_item = items[-2] # The 50th item
-        next_cursor = encode_cursor(last_item.created_at, last_item.id)
-        # Remove the 51st item from our return list
-        items = items[:-1]
-    
-    return {
-        "items": items,
-        "next_cursor": next_cursor
-    }
+        # The heart of the task: applying the cursor
+        if cursor:
+            cursor_data = decode_cursor(cursor)
+            if cursor_data:
+                queryset = queryset.filter(
+                    Q(created_at__lt=cursor_data['ts']) | 
+                    (Q(created_at=cursor_data['ts']) & Q(id__lt=cursor_data['id']))
+                )
+                
+        # Always sort newest first
+        queryset = queryset.order_by('-created_at', '-id')
+        
+        # Fetch limit + 1 to check for next page
+        items = list(queryset[:limit + 1])
+        
+        next_cursor = None
+        if len(items) > limit:
+            last_item = items[-2]
+            next_cursor = encode_cursor(last_item.created_at, last_item.id)
+            items = items[:-1]
+        
+        return {
+            "items": items,
+            "next_cursor": next_cursor
+        }
+    except Exception as e:
+        logger.exception(f"Critical Error in list_products: {str(e)}")
+        raise HttpError(500, "A backend error occurred while fetching products. Please try again later.")
